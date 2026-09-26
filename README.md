@@ -3,20 +3,33 @@
 <p align="center">reverse engineering the luau vm inside ios roblox — the functions, the anchors, the layout</p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/platform-iOS-black">
-  <img src="https://img.shields.io/badge/arch-arm64%20%2B%20arm64e-black">
-  <img src="https://img.shields.io/badge/protector-none%20on%20iOS-black">
-  <img src="https://img.shields.io/badge/tool-IDA-black">
+  <img src="https://img.shields.io/badge/platform-iOS-000000?style=for-the-badge" alt="platform">
+  <img src="https://img.shields.io/badge/arch-arm64%20%2B%20arm64e-000000?style=for-the-badge" alt="arch">
+  <img src="https://img.shields.io/badge/protector-none%20on%20iOS-2ea043?style=for-the-badge" alt="protector">
+  <img src="https://img.shields.io/badge/tool-IDA-C7192E?style=for-the-badge" alt="tool">
 </p>
 
 ---
 
 notes from reversing roblox's luau runtime on ios. no symbols, no cross-references,
-a 74 mb stripped binary — this is the map: which functions matter, the strings
-they anchor on, how to walk to them, and the `lua_State` layout you need to drive
-them.
+a 74 mb stripped binary — this is the map: which functions matter, the strings they
+anchor on, how to walk to them, and the `lua_State` layout you need to drive them.
 
-every address here is an rva in `RobloxLib` (ida loads it at base `0x0`).
+> every address here is an rva in `RobloxLib` (ida loads it at base `0x0`).
+
+---
+
+## contents
+
+- [the binary](#the-binary)
+- [the functions](#the-functions)
+- [finding `luau_load`](#finding-luau_load)
+- [finding `lua_pcall`](#finding-lua_pcall)
+- [finding `lua_newthread`](#finding-lua_newthread)
+- [finding `lua_tolstring`](#finding-lua_tolstring)
+- [the `lua_State` layout](#the-lua_state-layout)
+- [from these functions to a working executor](#from-these-functions-to-a-working-executor)
+- [notes](#notes-1)
 
 ---
 
@@ -31,10 +44,11 @@ roblox on ios is split in two:
 
 `__cstring` sits at `0x5247700`–`0x55b8744`.
 
-**there is no byfron / hyperion on ios.** searched, absent. no vm protector — the
-only real problem is that ida's auto-analysis does **not** build xrefs for most of
-`RobloxLib`. you can't "jump to xref"; you brute-scan `__text`, or anchor on a
-string that *does* keep a reference and walk the call graph by hand.
+> [!NOTE]
+> **there is no byfron / hyperion on ios.** searched, absent. no vm protector — the
+> only real problem is that ida's auto-analysis does **not** build xrefs for most of
+> `RobloxLib`. you can't "jump to xref"; you brute-scan `__text`, or anchor on a
+> string that *does* keep a reference and walk the call graph by hand.
 
 ---
 
@@ -63,29 +77,26 @@ the obvious anchor is the version-mismatch string:
 "%s: bytecode version mismatch (expected [%d..%d], got %d)"   @ 0x550cf43
 ```
 
-it has **no xref and no ADRP+ADD** a full `__text` page-scan can find — the
-compiler groups format strings on a shared page and reaches them by
-`base + offset` arithmetic, not statically greppable. a scan for a raw 64-bit
-pointer to it turns up nothing either. dead end from the string side.
+it has **no xref and no ADRP+ADD** a full `__text` page-scan can find — the compiler
+groups format strings on a shared page and reaches them by `base + offset`
+arithmetic, not statically greppable. a scan for a raw 64-bit pointer to it turns up
+nothing either. dead end from the string side.
 
 so anchor from `loadstring` instead — its error string keeps a real ref:
 
-```
-"loadstring() is not available in RobloxScript context."   @ 0x536abf1
-   └─ referenced only by  sub_1809D34   ← loadstring impl
+```mermaid
+flowchart TD
+    s["'loadstring() is not available<br/>in RobloxScript context.'  @ 0x536abf1"] --> a["sub_1809D34<br/>loadstring impl"]
+    a --> b["sub_17FB0C4<br/>preprocess: magic 0xE009325B...<br/>ZSTD-decompress cached bytecode"]
+    b --> c["sub_410F3B0<br/>every branch converges here<br/>= luau_load"]
+    c --> d["sub_410F4B4<br/>protected body<br/>holds 'bytecode version mismatch'"]
+
+    style c fill:#C7192E,color:#fff
+    style d fill:#222,color:#fff
 ```
 
-walk down:
-
-```
-sub_1809D34 (loadstring)
-  └─ sub_17FB0C4        preprocess: magic 0xE009325B4A107A52, ZSTD-decompress cached bytecode
-       └─ sub_410F3B0   ← every branch converges here   = luau_load
-            └─ sub_410F4B4  (protected body, holds "bytecode version mismatch")
-```
-
-`sub_410F4B4` is the deserializer. its prologue reads the version byte and bails
-on anything that isn't valid bytecode — this is what rejects raw source text:
+`sub_410F4B4` is the deserializer. its prologue reads the version byte and bails on
+anything that isn't valid bytecode — this is what rejects raw source text:
 
 ```c
 v5 = *(unsigned __int8 *)input;               // first byte = bytecode version
@@ -108,8 +119,8 @@ sub_410F3B0:
     ; (X0 = lua_State, X1 = chunkname)
 ```
 
-`int(lua_State* L, const char* chunkname, const char* data, size_t len, int env)`
-→ `0` ok, non-zero on error with the message left on the stack. note it takes
+`int(lua_State* L, const char* chunkname, const char* data, size_t len, int env)` →
+`0` ok, non-zero on error with the message left on the stack. note it takes
 **bytecode**, not source — feed source and you get "bytecode version mismatch".
 
 ---
@@ -125,8 +136,8 @@ anchor on the vm's type-error string:
 ```
 
 the protected-call core is `luaD_pcall` = `sub_40F25FC`: saves the stack/callinfo,
-runs a setjmp-protected callback, unwinds and returns a status. the one small
-caller that packages a `CallS { func, nresults }` is the public api:
+runs a setjmp-protected callback, unwinds and returns a status. the one small caller
+that packages a `CallS { func, nresults }` is the public api:
 
 ```c
 // sub_40E4CC0 = lua_pcall(L, nargs, nresults, errfunc)
@@ -151,14 +162,18 @@ sub_40E4CC0:
 
 `task.spawn`'s binding creates a coroutine — trace it:
 
-```
-"task.spawn is not available for AuroraScripts"   @ 0x536b194
-   └─ sub_180FBC8 (task.spawn)  →  sub_1810160  →  sub_40E1E50   = lua_newthread
+```mermaid
+flowchart LR
+    s["'task.spawn is not available<br/>for AuroraScripts'  @ 0x536b194"] --> a["sub_180FBC8<br/>task.spawn"]
+    a --> b["sub_1810160"]
+    b --> c["sub_40E1E50<br/>= lua_newthread"]
+
+    style c fill:#C7192E,color:#fff
 ```
 
 `sub_40E1E50(L)` allocates a thread (`sub_40FBDA0`), pushes it on `L`'s stack as a
-`TTHREAD` value (type tag `10`), bumps top by 16, and returns the new
-`lua_State*`. exactly `lua_State*(lua_State*)`.
+`TTHREAD` value (type tag `10`), bumps top by 16, and returns the new `lua_State*`.
+exactly `lua_State*(lua_State*)`.
 
 ---
 
@@ -183,14 +198,15 @@ L + 0x58   →  stack top
 *(*(L+0x28) + 0x90)  →  the thread's security identity object
 ```
 
-a chunk loaded on a thread **inherits that thread's identity** — the loaded
-closure takes its security context from `*(*(L+0x28)+0x90)`. so if you already
-hold a high-identity thread, anything you run on it is elevated for free; no
-separate "set identity" step.
+> [!IMPORTANT]
+> a chunk loaded on a thread **inherits that thread's identity** — the loaded closure
+> takes its security context from `*(*(L+0x28)+0x90)`. so if you already hold a
+> high-identity thread, anything you run on it is elevated for free; no separate "set
+> identity" step.
 
-the `ScriptContext` reflection string `@ 0x524e66b` *does* have xrefs, but they
-land in `sub_18A644` — a **class-descriptor registrar** (reflection metadata),
-not a live instance. that route is a dead end for reaching a real `lua_State`.
+the `ScriptContext` reflection string `@ 0x524e66b` *does* have xrefs, but they land
+in `sub_18A644` — a **class-descriptor registrar** (reflection metadata), not a live
+instance. that route is a dead end for reaching a real `lua_State`.
 
 ---
 
@@ -198,34 +214,43 @@ not a live instance. that route is a dead end for reaching a real `lua_State`.
 
 the pieces above are enough to compile → load → run luau at runtime:
 
-```
-compile(src)  →  bytecode                     ← the client compiler isn't exposed;
-                                                 loadstring only deserializes cached
-                                                 bytecode (magic 0xE009325B..., ZSTD),
-                                                 so bundle the upstream luau compiler.
-                                                 it emits version 9 / type 3, inside
-                                                 the [3..14] / [1..3] window 0x410f4b4
-                                                 accepts.
+```mermaid
+flowchart TD
+    src["source"] --> comp["bundled upstream luau compiler<br/>emits version 9 / type 3<br/>(inside the [3..14] window)"]
+    comp --> bc["bytecode"]
+    thr["lua_newthread(L)  0x40e1e50<br/>clean thread"] --> load["luau_load(T, '@name', bc)  0x410f3b0"]
+    bc --> load
+    load --> call["lua_pcall(T, 0, 0, 0)  0x40e4cc0"]
+    call -->|on failure| err["lua_tolstring(T, -1, &len)  0x40e2b44<br/>error message"]
 
-lua_newthread(L)              (0x40e1e50)     ← a clean thread; the captured thread's
-                                                 stack top is game state, so pcall on it
-                                                 calls the wrong value.
-luau_load(T, "@name", bc)     (0x410f3b0)
-lua_pcall(T, 0, 0, 0)         (0x40e4cc0)
-lua_tolstring(T, -1, &len)    (0x40e2b44)     ← the error message on failure.
+    style comp fill:#1f6feb,color:#fff
+    style load fill:#C7192E,color:#fff
 ```
 
-thread-safety: a `lua_State` can't be touched from another thread while the vm
-runs. hook the **gc step** (`0x40f30fc`) — it fires every interpreter tick, always
-on the vm thread — and do all of the above from there. capture `L` by hooking
-`luau_load` and snapshotting arg0 the first time the game loads any chunk.
+- `compile(src) → bytecode` — the client compiler isn't exposed; `loadstring` only
+  deserializes cached bytecode (magic `0xE009325B...`, ZSTD), so **bundle the upstream
+  luau compiler**. it emits version 9 / type 3, inside the `[3..14]` / `[1..3]` window
+  `0x410f4b4` accepts.
+- `lua_newthread(L)` (`0x40e1e50`) — a clean thread; the captured thread's stack top
+  is game state, so `pcall` on it calls the wrong value.
+- `luau_load(T, "@name", bc)` (`0x410f3b0`)
+- `lua_pcall(T, 0, 0, 0)` (`0x40e4cc0`)
+- `lua_tolstring(T, -1, &len)` (`0x40e2b44`) — the error message on failure.
+
+> [!IMPORTANT]
+> **thread-safety:** a `lua_State` can't be touched from another thread while the vm
+> runs. hook the **gc step** (`0x40f30fc`) — it fires every interpreter tick, always
+> on the vm thread — and do all of the above from there. capture `L` by hooking
+> `luau_load` and snapshotting arg0 the first time the game loads any chunk.
 
 ---
 
 ## notes
 
-- every rva is tied to the roblox build it was reversed against. updates move
-  them; the string anchors above make re-finding them a walk, not a hunt.
+- every rva is tied to the roblox build it was reversed against. updates move them;
+  the string anchors above make re-finding them a walk, not a hunt.
 - no protector, no server, no memory writes to `.text` — pure read + call.
+
+---
 
 <p align="center">— shiedless</p>
