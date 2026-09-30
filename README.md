@@ -253,4 +253,10 @@ flowchart TD
 
 ---
 
+<p align="center">
+  <sub><b>more from me:</b> <a href="https://github.com/shiedless/ios-ue4-re">ios-ue4-re</a> · <a href="https://github.com/shiedless/unity-il2cpp-esp-tutorial">unity-il2cpp-esp-tutorial</a> · <a href="https://github.com/shiedless/ios-messiah-re">ios-messiah-re</a> · <a href="https://github.com/shiedless/ida-pro-guide">ida-pro-guide</a> · <a href="https://github.com/shiedless/Reveal">Reveal</a></sub>
+</p>
+
+---
+
 <p align="center">— shiedless</p>
