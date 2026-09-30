@@ -220,8 +220,8 @@ flowchart TD
     comp --> bc["bytecode"]
     thr["lua_newthread(L)  0x40e1e50<br/>clean thread"] --> load["luau_load(T, '@name', bc)  0x410f3b0"]
     bc --> load
-    load --> call["lua_pcall(T, 0, 0, 0)  0x40e4cc0"]
-    call -->|on failure| err["lua_tolstring(T, -1, &len)  0x40e2b44<br/>error message"]
+    load --> pcall["lua_pcall(T, 0, 0, 0)  0x40e4cc0"]
+    pcall -->|on failure| err["lua_tolstring(T, -1, &len)  0x40e2b44<br/>error message"]
 
     style comp fill:#1f6feb,color:#fff
     style load fill:#C7192E,color:#fff
