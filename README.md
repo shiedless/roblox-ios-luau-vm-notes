@@ -29,7 +29,7 @@ anchor on, how to walk to them, and the `lua_State` layout you need to drive the
 - [finding `lua_tolstring`](#finding-lua_tolstring)
 - [the `lua_State` layout](#the-lua_state-layout)
 - [from these functions to a working executor](#from-these-functions-to-a-working-executor)
-- [notes](#notes-1)
+- [notes](#notes)
 
 ---
 
